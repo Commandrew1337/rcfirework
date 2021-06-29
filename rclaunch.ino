@@ -6,7 +6,7 @@ int lastlaunch=0;
 void setup() {
 pinMode(2, INPUT);
 pinMode(3, INPUT);
-pinMode(13, INPUT);
+
 
 pinMode(4, OUTPUT);
 pinMode(5, OUTPUT);
@@ -17,6 +17,7 @@ pinMode(9, OUTPUT);
 pinMode(10, OUTPUT);
 pinMode(11, OUTPUT);
 pinMode(12, OUTPUT);
+pinMode(13, OUTPUT);
 
 digitalWrite(4,LOW);
 digitalWrite(5,LOW);
@@ -27,6 +28,7 @@ digitalWrite(9,LOW);
 digitalWrite(10,LOW);
 digitalWrite(11,LOW);
 digitalWrite(12,LOW);
+digitalWrite(13,LOW);
 
 
 Serial.begin(9600);
