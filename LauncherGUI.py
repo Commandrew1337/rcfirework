@@ -7,17 +7,22 @@ import sys
 import serial.tools.list_ports
 import threading
 import queue
+import traceback
 
 
 class FireWorkLauncherControllerThread( threading.Thread ):
+    COM_TYPE_BLUETOOTH = 'bluetooth'
+    COM_TYPE_LORA      = 'lora'
+
     DELAY_AFTER_SEND    = 0.25
     DELAY_AFTER_RECEIVE = 0.1
     GAP_IGNITOR_TIME = 0.75 - (DELAY_AFTER_SEND + DELAY_AFTER_RECEIVE) #is 1/2 ignitor timing in microcontroller code
 
-    def __init__( self, q, comStr, *args, **kwargs ):
+    def __init__( self, q, comStr, comType, *args, **kwargs ):
         super( FireWorkLauncherControllerThread, self ).__init__( *args, **kwargs )
         self.queue       = q
         self._stopThread = threading.Event()
+        self.comType     = comType
 
         print( 'Open Serial Port: {}'.format( comStr ) )
 
@@ -33,18 +38,29 @@ class FireWorkLauncherControllerThread( threading.Thread ):
 
 
 
-    def senddata( self, ignitorIdx ):
+    def senddata( self, ignitorIdx, moduleIdx ):
 
         if (ignitorIdx<10):
             ignitorIdxStr  = '{}'.format( ignitorIdx )
         else:
             ignitorIdxStr = chr(ignitorIdx+87) #ascii encoding of a to z starting at 10 to NUM_IGNITORS, will fail at NUM_IGNITORS=35
-        ignitorIdxByte = ignitorIdxStr.encode(encoding="ascii",errors="xmlcharrefreplace")
-        print('Sending:', ignitorIdxByte)
-        response       = ''
 
         if self.serialPort:
-            self.serialPort.write( ignitorIdxByte )
+            if self.comType == self.COM_TYPE_LORA:
+                
+                if moduleIdx == 3:
+                    ignitorIdxStr = 'RC{:02d}'.format( ignitorIdx )
+               
+                msg = 'AT+SEND={},{},{}\r\n'.format( moduleIdx, len( ignitorIdxStr ), ignitorIdxStr )
+                ignitorIdxByte = msg.encode(encoding="ascii",errors="xmlcharrefreplace")
+                print('Sending:', ignitorIdxByte)
+                self.serialPort.write( ignitorIdxByte )
+            else:
+                ignitorIdxByte = ignitorIdxStr.encode(encoding="ascii",errors="xmlcharrefreplace")
+                print('Sending:', ignitorIdxByte)
+                self.serialPort.write( ignitorIdxByte )
+
+        response = ''
 
         # wait before reading output (give device time to answer)
         # maybe if the PIC wasnt so slow...
@@ -66,11 +82,11 @@ class FireWorkLauncherControllerThread( threading.Thread ):
                 return
 
             try:
-                ignitorRequest = self.queue.get( timeout = 1 )
+                ignitorRequest, moduleIdx = self.queue.get( timeout = 1 )
             except queue.Empty:
                 continue
 
-            print( self.senddata( ignitorRequest ) )
+            print( self.senddata( ignitorRequest, moduleIdx ) )
 
             self.queue.task_done()
 
@@ -96,7 +112,7 @@ class FireworkLauncherControllerClass():
         self.serialCommunicatorThread = None
 
     def openSerialPort( self, comStr ):
-        self.serialCommunicatorThread = FireWorkLauncherControllerThread( self.queue, comStr )
+        self.serialCommunicatorThread = FireWorkLauncherControllerThread( self.queue, comStr, 'lora' )
         self.serialCommunicatorThread.start()
 
     def closeSerialPort( self ):
@@ -105,12 +121,11 @@ class FireworkLauncherControllerClass():
             self.serialCommunicatorThread.join()
             self.serialCommunicatorThread = None
 
-    def addIgniterRequestToQueue( self, ignitorIdx ):
-        self.queue.put_nowait( ignitorIdx )
+    def addIgniterRequestToQueue( self, ignitorIdx, moduleIdx ):
+        self.queue.put_nowait( ( ignitorIdx, moduleIdx ) )
 
-
-    def buttonPressed( self, ignitorIdx ):
-        response = self.addIgniterRequestToQueue( ignitorIdx )
+    def buttonPressed( self, ignitorIdx, moduleIdx ):
+        response = self.addIgniterRequestToQueue( ignitorIdx, moduleIdx )
         
 
 
@@ -129,7 +144,7 @@ class IgniterButton():
         )
         self.command = command
         self.ignitorIdx = ignitorIdx
-        self.button.grid( column = column, row = row )
+        self.button.grid( column = column, row = row, sticky = tk.N+tk.S+tk.E+tk.W )
         self.color = list( self.buttonDefaultColor )
 
     def pressed( self ):
@@ -157,72 +172,104 @@ class LauncherGui():
     def __init__( self ):
         self.comPorts = serial.tools.list_ports.comports()
         self.FireworkLauncherController = FireworkLauncherControllerClass()
-
+        self.currentModuleIdx = 2
 
     def run( self ):
         self.window = tk.Tk()
         self.window.title( 'Fireworks Launcher' )
         self.window.geometry( '700x400' )
-         
-        self.lbl = tk.Label( self.window, text = '', font = ( 'Arial Bold', 10 ) )
-        self.lbl.grid( column = 6, row = 0 )
+
+        self.launchFrame   = tk.Frame( self.window )
+        self.settingsFrame = tk.Frame( self.window )
+        self.launchFrame.configure( bg='black' )
+        self.settingsFrame.configure( bg='black' )
+
+        self.launchFrame.pack(fill="both", side=tk.LEFT, expand=True)
+        self.settingsFrame.pack(fill="both", side=tk.RIGHT, expand=True)
+
+        self.lbl = tk.Label( self.settingsFrame, text = '', font = ( 'Arial Bold', 10 ) )
+        self.lbl.grid( column = 0, row = 0 )
 
         buttonFont = ( "Arial Bold", 20 )
-        numButtonColumns = 6
 
         comPortStrs = [ comPort.device for comPort in self.comPorts ]
 
         if len( comPortStrs ) == 0:
             comPortStrs.append( 'None' )
 
+        comPortStrs.append( '/dev/ttyS0' )
 
-        self.tkStrComPort = tk.StringVar( self.window )
+        self.tkStrComPort = tk.StringVar( self.settingsFrame )
         self.tkStrComPort.set( comPortStrs[0] ) # set the default option
 
-        comPortSelect = tk.OptionMenu( self.window, self.tkStrComPort, *comPortStrs )
-        comPortSelect.grid( column = 1, row = 0 )
+        comPortSelect = tk.OptionMenu( self.settingsFrame, self.tkStrComPort, *comPortStrs )
+        comPortSelect.grid( column = 0, row = 1 )
 
 
         comPortOpen = tk.Button( 
-            self.window, 
+            self.settingsFrame, 
             text    = "Open COM Port", 
             command = self.openComButtonPressed )
-        comPortOpen.grid( column = 2, row = 0 )
+        comPortOpen.grid( column = 0, row = 2 )
 
-        self.comPortSelectLabel = tk.Label( self.window, text = 'Closed' )
-        self.comPortSelectLabel.grid( column = 3, row = 0 )
+        self.comPortSelectLabel = tk.Label( self.settingsFrame, text = 'Closed' )
+        self.comPortSelectLabel.grid( column = 0, row = 3 )
+
+        #btn1 = tk.Button( self.container, text = "ALL", command = self.igniteAllButtonPressed, font = buttonFont, bg = 'orange' )
+        #btn1.grid( column = 2, row = 6 )
+
+        self.modBut = tk.Button( self.settingsFrame, text = "Module 2", command = self.moduleButtonPressed, font = buttonFont, bg = 'cyan' )
+        self.modBut.grid( column = 0, row = 4, sticky=tk.N+tk.S+tk.E+tk.W )
+
+        btn1 = tk.Button( self.settingsFrame, text = "Reset", command = self.resetButtonPressed, font = buttonFont, bg = 'cyan' )
+        btn1.grid( column = 0, row = 5, sticky=tk.N+tk.S+tk.E+tk.W )
+
+        btn1 = tk.Button( self.settingsFrame, text = "light", command = self.lightButtonPressed, font = buttonFont, bg = 'yellow' )
+        btn1.grid( column = 0, row = 6, sticky=tk.N+tk.S+tk.E+tk.W )
+
+        btn1 = tk.Button( self.settingsFrame, text = "disarm", command = self.disarmButtonPressed, font = buttonFont, bg = 'purple' )
+        btn1.grid( column = 0, row = 7, sticky=tk.N+tk.S+tk.E+tk.W )
+
+        btn1 = tk.Button( self.settingsFrame, text = "exit", command = self.exitButtonPressed, font = buttonFont, bg = 'grey'  )
+        btn1.grid( column = 0, row = 8, sticky=tk.N+tk.S+tk.E+tk.W )
+
+        for row in range( 8 ):
+            self.settingsFrame.rowconfigure( row, weight = 1 )
 
         self.ignitorButtons = []
 
+        numButtonColumnRows = int( math.ceil( math.sqrt( self.FireworkLauncherController.NUM_IGNITORS ) ) )
+        print( numButtonColumnRows )
         for buttonIdx, ignitorIdx in enumerate( self.FireworkLauncherController.IGNITORS ):
-            column = int( buttonIdx % numButtonColumns )
-            row    = 1+int( math.floor( buttonIdx / numButtonColumns ) )
+            column = int( buttonIdx % numButtonColumnRows )
+            row    = int( math.floor( buttonIdx / numButtonColumnRows ) )
+            print( column, row )
             windowCommand = partial( self.igniteButtonPressed, ignitorIdx )
-            self.ignitorButtons.append( IgniterButton( self.window, windowCommand, ignitorIdx, column, row ) )
+            self.ignitorButtons.append( IgniterButton( self.launchFrame, windowCommand, ignitorIdx, column, row ) )
     
-        btn1 = tk.Button( self.window, text = "ALL", command = self.igniteAllButtonPressed, font = buttonFont, bg = 'orange' )
-        btn1.grid( column = 2, row = 6 )
+        for columnRow in range( numButtonColumnRows ):
+            self.launchFrame.rowconfigure(columnRow, weight = 1)
+            self.launchFrame.columnconfigure(columnRow, weight = 1)
 
-        btn1 = tk.Button( self.window, text = "Reset", command = self.resetButtonPressed, font = buttonFont, bg = 'cyan' )
-        btn1.grid( column = 4, row = 6 )
-
-        btn1 = tk.Button( self.window, text = "exit", command = self.exitButtonPressed, font = buttonFont, bg = 'grey'  )
-        btn1.grid( column = 6, row = 6 )
-
-        btn1 = tk.Button( self.window, text = "light", command = self.lightButtonPressed, font = buttonFont, bg = 'yellow' )
-        btn1.grid( column = 0, row = 6 )
-
-        btn1 = tk.Button( self.window, text = "disarm", command = self.disarmButtonPressed, font = buttonFont, bg = 'purple' )
-        btn1.grid( column = 6, row = 5 )
 
         self.window.mainloop()
 
         self.FireworkLauncherController.closeSerialPort()
 
 
+    def moduleButtonPressed( self ):
+        if self.currentModuleIdx == 2:
+            self.currentModuleIdx = 3
+        else:
+            self.currentModuleIdx = 2
+
+        self.modBut.configure( text = 'Module {}'.format( self.currentModuleIdx ) )
+        self.lbl.configure( text = 'switching to: {}'.format( self.currentModuleIdx ) )
+
+
     def igniteButtonPressed( self, ignitorIdx ):
         self.lbl.configure( text = '{} sending'.format( ignitorIdx ) )
-        self.FireworkLauncherController.buttonPressed( ignitorIdx )
+        self.FireworkLauncherController.buttonPressed( ignitorIdx, self.currentModuleIdx )
 
 
     def igniteAllButtonPressed( self ):
@@ -233,11 +280,11 @@ class LauncherGui():
 
     def lightButtonPressed( self ):
         self.lbl.configure( text = "toggle light" )
-        self.FireworkLauncherController.buttonPressed( ignitorIdx=24 )
+        self.FireworkLauncherController.buttonPressed( 24, self.currentModuleIdx )
 
     def disarmButtonPressed( self ):
         self.lbl.configure( text = "sent disarm" )
-        self.FireworkLauncherController.buttonPressed( ignitorIdx=25 )
+        self.FireworkLauncherController.buttonPressed( 25, self.currentModuleIdx )
 
     def exitButtonPressed( self ):
         self.lbl.configure( text = "exiting" )
@@ -261,6 +308,7 @@ class LauncherGui():
             self.FireworkLauncherController.openSerialPort( comToOpen )
             self.comPortSelectLabel.configure( text = "{} Open".format( comToOpen ) )
         except:
+            print( traceback.format_exc() )
             self.comPortSelectLabel.configure( text = "Failed to open {}".format( comToOpen ) )
 
 
