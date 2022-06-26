@@ -139,9 +139,12 @@ void loop() {
     //lora.println("AT+PARAMETER?");
     //lora.println("AT+BAND?");
     //lora.println("AT+ADDRESS?");
+    //lora.println("AT+ADDRESS=3");
     //lora.println("AT+NETWORKID?");
     //lora.println("AT+CPIN?");
     //lora.println("AT+NETWORKID?");
+    //delay(100);
+    //Serial.println("received: "+inString);
     //delay(100);
    
   }
