@@ -3,6 +3,7 @@
 SoftwareSerial lora(18,17);//A4,A3
 
 bool readerror=false;
+bool lightstatus=false;
 
 bool launchlock=false;
 int lastlaunch=0;
@@ -13,6 +14,7 @@ pinMode(3, INPUT);
 pinMode(14, INPUT);//A0
 pinMode(15, OUTPUT);//A1
 pinMode(16, OUTPUT);//A2
+pinMode(19, OUTPUT);//A5
 
 pinMode(4, OUTPUT);
 pinMode(5, OUTPUT);
@@ -38,6 +40,7 @@ digitalWrite(13,LOW);
 
 digitalWrite(15,LOW);
 digitalWrite(16,LOW);
+digitalWrite(19,LOW);
 
 
 Serial.begin(9600);
@@ -124,6 +127,12 @@ void loop() {
         }
         else{
           Serial.println("launch number invalid");
+          if(launchnum == 24){
+            Serial.println("toggle light");
+            lightstatus=!lightstatus;
+            if(lightstatus==false) digitalWrite(19,LOW);
+            if(lightstatus==true) digitalWrite(19,HIGH);
+          }
         }
         Serial.println("");
      
